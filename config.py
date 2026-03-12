@@ -1,3 +1,18 @@
+# ============================================================
+# HARDWARE SETUP CHECKLIST — complete before first real run
+# ============================================================
+# [ ] 1. Set WIFI_SSID and WIFI_PASSWORD
+# [ ] 2. Set LATITUDE and LONGITUDE for your location
+# [ ] 3. Check GPIO pin numbers match your actual wiring
+# [ ] 4. Run sensors.scan_sensors() in Thonny REPL
+#         and paste the 4 DS18B20 addresses below
+# [ ] 5. Calibrate pressure sensor — measure voltage at
+#         empty and full tank, update PRESSURE_VOLTAGE_AT_EMPTY
+#         and PRESSURE_VOLTAGE_AT_FULL
+# [ ] 6. Re-upload config.py after all changes
+# ============================================================
+
+
 # config.py
 # ─────────────────────────────────────────────────────────────────────────────
 # All user-configurable settings live here.
