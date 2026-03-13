@@ -14,7 +14,7 @@ The output of the control are the flags `refill_water` and `activate_heater`.
     - Energy consumed will be modeled
     - Water will be heated to corresponding temperature in a set time.
 
-We formulate the control problem as the following. Define the following variables $D, S, E$, the water demand, solar water supply, and electrically heated water supply, all in dimensions of volume of water per unit time. Note that the solar water supply will be delta functions, but we approximate it as a smooth curve. We also define the tank capacity as $X$
+We formulate the control problem as the following. Define the following variables $D, S, E$, the water demand, solar water supply, and electrically heated water supply, all in dimensions of volume of water per unit time. We also define the tank capacity as $X$.
 
 The constraint can then be formalized as $$\int_T \left[ {D}(t) - {S}(t) - {E}(t) \right] \, dt \leq X,$$ for all time intervals $T$.
 
