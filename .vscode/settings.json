@@ -55,5 +55,16 @@
   "C_Cpp_Runner.useLeakSanitizer": false,
   "C_Cpp_Runner.showCompilationTime": false,
   "C_Cpp_Runner.useLinkTimeOptimization": false,
-  "C_Cpp_Runner.msvcSecureNoWarnings": false
+  "C_Cpp_Runner.msvcSecureNoWarnings": false,
+  "python.languageServer": "Pylance",
+  "python.analysis.diagnosticSeverityOverrides": {
+    "reportMissingModuleSource": "none",
+    "reportShadowedImports": "none"
+  },
+  "python.analysis.extraPaths": [
+    "",
+    "/Users/zhangboya/.vscode/extensions/joedevivo.vscode-circuitpython-0.2.0-darwin-arm64/stubs",
+    "/Users/zhangboya/Library/Application Support/Code/User/globalStorage/joedevivo.vscode-circuitpython/bundle/20260313/adafruit-circuitpython-bundle-py-20260313/lib"
+  ],
+  "circuitpython.board.version": null
 }
