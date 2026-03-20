@@ -35,7 +35,7 @@ $$r_k = \beta_0 + \beta_1 S_k + \beta_2 v_k + \beta_3 (T_k - T_{a,k})$$
 
 The residual error of the model $r_k$ will be corrected through fitting the coefficients $\beta _i$ with ground truth data.
 
-So we derive that `time-to-60C = m * c_v * (60 - T_0) / P_ave`
+So we derive that $ t_{60C} = mc_v (60 - T_0) / P_{ave}$
 
 # TODO
 - [ ] Calculate the order of magnitude of `time-to-60C` to select a scale on which we select data to get $S_k$ and $T_k$
