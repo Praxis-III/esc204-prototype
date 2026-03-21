@@ -234,3 +234,76 @@ Complete before first real run. All changes go in `config.py` only.
 | 11 | Pressure sensor voltage at full tank | `PRESSURE_VOLTAGE_AT_FULL` | ☐ |
 | 12 | Actual storage tank max volume (litres) | `STORAGE_TANK_MAX_VOLUME_L` | ☐ |
 | 13 | Actual supply tank max volume (litres) | `SUPPLY_TANK_MAX_VOLUME_L` | ☐ |
+
+
+# esc204-prototype
+The codebase for prototype in ESC204
+
+## Control Logic Algorithm
+
+The core decision-making process implemented in `controller.py` evaluates system states based on temperature sensors, ambient light, and supply thresholds to safely and efficiently manage the storage tanks and PVT loop.
+
+```latex
+\begin{algorithm}
+\caption{System Controller Logic}
+\begin{algorithmic}[1]
+\LOOP
+    \STATE Read sensors: $T_{storage}$, $T_{PVT}$, $V_{storage}$, LDR (Sunlight)
+    \STATE Read external forecaster (Weather)
+
+    \IF{$\min(T_{storage}, T_{PVT}) \le T_{freeze}$}
+        \STATE \COMMENT{Case 4: Freeze Protection}
+        \STATE Open storage valve; Close supply valve
+        \STATE Turn heater ON
+        \STATE \textbf{continue}
+    \ENDIF
+
+    \IF{$\max(T_{storage}) > T_{max\_safe}$}
+        \STATE \COMMENT{Case 5: Overtemperature Emergency}
+        \STATE Close all valves; Turn heater OFF
+        \STATE \textbf{continue}
+    \ENDIF
+
+    \IF{$V_{supply} < V_{refill\_threshold}$}
+        \STATE \COMMENT{Case 3: Emergency Supply Refill}
+        \STATE Open supply valve; Open storage valve
+        \IF{Predicted mixed temp $< T_{minimum}$}
+            \STATE Turn heater ON
+        \ENDIF
+        \STATE \textbf{continue}
+    \ENDIF
+
+    \IF{$T_{PVT} \ge T_{PVT\_ready}$}
+        \IF{$V_{storage}$ is FULL}
+            \STATE \COMMENT{Case 8: Storage Full}
+            \STATE Close all valves
+        \ELSE
+            \STATE \COMMENT{Case 2: Fill Storage}
+            \STATE Open supply valve; Open storage valve
+        \ENDIF
+    \ELSIF{Supply Valve is CLOSED \AND Sun is OUT \AND Forecast is GOOD}
+        \STATE \COMMENT{Case 1: Start PVT Flow}
+        \STATE Open supply valve; Close storage valve
+    \ELSIF{Sun is NOT OUT \AND Cloud Duration $> \text{Cloud Tolerance}$}
+        \STATE \COMMENT{Case 9: Prolonged Cloud Cover}
+        \STATE Close all valves
+    \ENDIF
+
+    \STATE \COMMENT{Heater Control (Cases 6 \& 10)}
+    \IF{$T_{avg} \le T_{heater\_on} \OR$ (No Sun Expected \AND $T_{avg} < T_{target}$)}
+        \STATE Turn heater ON
+    \ELSIF{$T_{avg} \ge T_{heater\_off}$}
+        \STATE Turn heater OFF
+    \ENDIF
+
+    \STATE \COMMENT{Case 7: Passive / Night Mode}
+    \IF{Sun is NOT OUT \AND Supply valve is CLOSED}
+        \STATE Close storage valve
+    \ENDIF
+\ENDLOOP
+\end{algorithmic}
+\end{algorithm}
+```
+
+# Pin Configuration
+
