@@ -1,6 +1,6 @@
 # PVT Solar Control System
 
-**Raspberry Pi Pico W · MicroPython · First Iteration**
+**Raspberry Pi Pico W · MicroPython **
 
 ---
 
