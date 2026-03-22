@@ -1,156 +1,134 @@
 # sensors.py
 # ─────────────────────────────────────────────────────────────────────────────
 # Handles all sensor reading:
-#   - DS18B20 temperature sensors (1-Wire)
-#   - Photoresistor / LDR (analog ADC)
+#   - Thermistor (10K Precision Epoxy, Steinhart-Hart equation)
+#   - Photoresistor / LDR (lux conversion)
 #   - Pressure sensor (analog ADC → volume in litres)
+#
+# All sensors use MicroPython's machine.ADC (16-bit, 0–65535, 3.3V reference).
 # ─────────────────────────────────────────────────────────────────────────────
 
 import machine
-import onewire
-import ds18x20
-import time
+import math
 from config import (
-    ONEWIRE_PIN, PHOTORESISTOR_PIN, PRESSURE_PIN,
-    DS18B20_STORAGE_TOP, DS18B20_STORAGE_MID, DS18B20_STORAGE_BOTTOM, DS18B20_PVT,
+    THERMISTOR_PIN, PHOTORESISTOR_PIN, PRESSURE_PIN,
+    THERM_NOMINAL_RESISTANCE, THERM_NOMINAL_TEMP_C,
+    THERM_B_COEFFICIENT, THERM_SERIES_RESISTOR, THERM_OFFSET,
+    LDR_FIXED_RESISTOR, LDR_A_CONST, LDR_B_CONST,
+    LDR_SUNLIGHT_LUX, LDR_BRIGHT_SUN_LUX,
     PRESSURE_VOLTAGE_AT_EMPTY, PRESSURE_VOLTAGE_AT_FULL,
-    STORAGE_TANK_MAX_VOLUME_L
+    STORAGE_TANK_MAX_VOLUME_L,
 )
 
-# ── 1-Wire / DS18B20 Setup ────────────────────────────────────────────────────
-_ow_pin  = machine.Pin(ONEWIRE_PIN)
-_ow_bus  = onewire.OneWire(_ow_pin)
-_ds      = ds18x20.DS18X20(_ow_bus)
-
 # ── ADC Setup ─────────────────────────────────────────────────────────────────
+_therm_adc    = machine.ADC(THERMISTOR_PIN)
 _ldr_adc      = machine.ADC(PHOTORESISTOR_PIN)
 _pressure_adc = machine.ADC(PRESSURE_PIN)
 
-# Pico W ADC reference voltage is 3.3V, 16-bit (0–65535)
-_ADC_MAX   = 65535
-_VREF      = 3.3
+# Pico W: 16-bit ADC, 3.3V reference
+_ADC_MAX = 65535
+_VREF    = 3.3
 
 
-def scan_sensors():
-    """
-    Scans the 1-Wire bus and prints all found sensor addresses.
-    Run this ONCE when you first set up hardware to identify which address
-    belongs to which physical sensor (put them in warm/cold water to tell apart).
-    Then paste the addresses into config.py.
-    """
-    print("Scanning 1-Wire bus for DS18B20 sensors...")
-    roms = _ds.scan()
-    if not roms:
-        print("  No sensors found! Check wiring and pull-up resistor (4.7kΩ).")
-        return
-    print(f"  Found {len(roms)} sensor(s):")
-    for i, rom in enumerate(roms):
-        print(f"    Sensor {i}: bytearray({bytes(rom)})")
-    print("\nCopy these into config.py as DS18B20_STORAGE_TOP, _MID, _BOTTOM, _PVT")
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _read_avg(adc, samples=10):
+    """Reads an ADC pin multiple times and returns the integer average.
+    Averaging reduces noise on analog readings."""
+    total = 0
+    for _ in range(samples):
+        total += adc.read_u16()
+    return total // samples
+
+def _adc_to_voltage(raw):
+    """Converts a raw 16-bit ADC value to voltage (0–3.3V)."""
+    return _VREF * raw / _ADC_MAX
 
 
-def _read_temp_c(rom_address):
+# ── Thermistor ────────────────────────────────────────────────────────────────
+
+def read_temp_c():
     """
-    Read temperature from a specific DS18B20 sensor by its ROM address.
-    Returns temperature in °C, or None on failure.
+    Reads the 10K Precision Epoxy Thermistor and returns temperature in °C.
+    Uses the Steinhart-Hart B-parameter equation:
+        1/T = 1/T0 + (1/B) * ln(R/R0)
+    Returns None if the reading is out of a plausible range.
     """
-    if rom_address is None:
-        return None
-    try:
-        _ds.convert_temp()
-        time.sleep_ms(750)  # DS18B20 needs ~750ms to convert
-        return _ds.read_temp(rom_address)
-    except Exception as e:
-        print(f"  Temp sensor read error: {e}")
+    raw = _read_avg(_therm_adc)
+
+    if raw <= 0:
         return None
 
+    voltage    = _adc_to_voltage(raw)
+    # Voltage divider: thermistor on top, series resistor on bottom
+    # R_therm = R_series / (V_ref/V_out - 1)
+    resistance = THERM_SERIES_RESISTOR / (_VREF / voltage - 1)
 
-def read_storage_temps():
+    # Steinhart-Hart B-parameter equation
+    steinhart  = resistance / THERM_NOMINAL_RESISTANCE
+    steinhart  = math.log(steinhart)
+    steinhart /= THERM_B_COEFFICIENT
+    steinhart += 1.0 / (THERM_NOMINAL_TEMP_C + 273.15)
+    temp_k     = 1.0 / steinhart
+    temp_c     = temp_k - 273.15 + THERM_OFFSET
+
+    return round(temp_c, 2)
+
+
+# ── Photoresistor / LDR ───────────────────────────────────────────────────────
+
+def _ldr_resistance(voltage):
+    """Converts LDR voltage divider output to LDR resistance."""
+    if voltage <= 0.001:
+        return 1e9   # Effectively infinite resistance in darkness
+    return LDR_FIXED_RESISTOR * (_VREF - voltage) / voltage
+
+def _resistance_to_lux(resistance):
+    """Converts LDR resistance to approximate lux using calibration constants."""
+    return (LDR_A_CONST / resistance) ** (1.0 / LDR_B_CONST)
+
+def read_lux():
     """
-    Returns a dict with storage tank temperatures:
-    { 'top': float|None, 'mid': float|None, 'bottom': float|None }
+    Reads the photoresistor and returns approximate illuminance in lux.
+    Higher lux = more light. Uses empirical calibration constants from photo.py.
+    Returns 0.0 if the sensor reads no light.
     """
-    # Trigger all sensors to convert at once (more efficient than one-by-one)
-    try:
-        _ds.convert_temp()
-        time.sleep_ms(750)
-    except Exception as e:
-        print(f"  DS18B20 convert error: {e}")
-        return {'top': None, 'mid': None, 'bottom': None}
+    raw        = _read_avg(_ldr_adc)
+    voltage    = _adc_to_voltage(raw)
+    resistance = _ldr_resistance(voltage)
+    lux        = _resistance_to_lux(resistance)
+    return round(lux, 2)
 
-    def safe_read(rom):
-        if rom is None:
-            return None
-        try:
-            return _ds.read_temp(rom)
-        except Exception as e:
-            print(f"  Read error for {rom}: {e}")
-            return None
+def sun_is_out():
+    """Returns True if current lux reading is above the sunlight threshold."""
+    return read_lux() >= LDR_SUNLIGHT_LUX
 
-    return {
-        'top':    safe_read(DS18B20_STORAGE_TOP),
-        'mid':    safe_read(DS18B20_STORAGE_MID),
-        'bottom': safe_read(DS18B20_STORAGE_BOTTOM),
-    }
+def sun_is_bright():
+    """Returns True if current lux reading indicates strong direct sunlight."""
+    return read_lux() >= LDR_BRIGHT_SUN_LUX
 
 
-def read_pvt_temp():
-    """Returns PVT panel temperature in °C, or None on failure."""
-    try:
-        _ds.convert_temp()
-        time.sleep_ms(750)
-        if DS18B20_PVT is None:
-            return None
-        return _ds.read_temp(DS18B20_PVT)
-    except Exception as e:
-        print(f"  PVT temp read error: {e}")
-        return None
-
-
-def read_ldr_raw():
-    """
-    Returns the raw ADC value from the photoresistor (0–65535).
-    Higher = more light (assuming LDR in a pull-down voltage divider config).
-    """
-    return _ldr_adc.read_u16()
-
-
-def read_ldr_percent():
-    """Returns light level as 0–100% (100% = brightest)."""
-    return round((read_ldr_raw() / _ADC_MAX) * 100, 1)
-
+# ── Pressure Sensor (Storage Tank Volume) ────────────────────────────────────
 
 def read_storage_volume_litres():
     """
     Reads the pressure sensor and converts to volume in litres.
-    Uses the calibration values in config.py.
-    Assumes water density = 1 kg/L.
+    Uses linear interpolation between the two calibration voltages in config.py.
+    Water density assumed 1 kg/L so mass (kg) == volume (L).
+    Result is clamped to 0–max to handle sensor noise at extremes.
     """
-    raw   = _pressure_adc.read_u16()
-    volts = (raw / _ADC_MAX) * _VREF
+    raw   = _read_avg(_pressure_adc)
+    volts = _adc_to_voltage(raw)
 
-    # Linear interpolation between empty and full calibration points
     volt_range = PRESSURE_VOLTAGE_AT_FULL - PRESSURE_VOLTAGE_AT_EMPTY
     if volt_range == 0:
         return 0.0
 
     fraction = (volts - PRESSURE_VOLTAGE_AT_EMPTY) / volt_range
-    fraction = max(0.0, min(1.0, fraction))   # Clamp to 0–1
+    fraction = max(0.0, min(1.0, fraction))   # Clamp to valid range
 
     return round(fraction * STORAGE_TANK_MAX_VOLUME_L, 2)
 
-
 def read_storage_fill_fraction():
-    """Returns storage tank fill level as 0.0–1.0."""
+    """Returns storage tank fill level as 0.0 (empty) to 1.0 (full)."""
     return read_storage_volume_litres() / STORAGE_TANK_MAX_VOLUME_L
-
-
-def estimate_mixed_temp(temp_top, temp_bottom, volume_top_l, volume_bottom_l):
-    """
-    Estimates the equilibrium temperature when two water volumes mix.
-    Uses a simple energy balance (mass * temp weighted average).
-    Water density assumed 1 kg/L so mass (kg) == volume (L).
-    """
-    if volume_top_l + volume_bottom_l == 0:
-        return None
-    return ((temp_top * volume_top_l) + (temp_bottom * volume_bottom_l)) / (volume_top_l + volume_bottom_l)

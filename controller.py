@@ -1,22 +1,25 @@
 # controller.py
 # ─────────────────────────────────────────────────────────────────────────────
 # The brain of the system. Reads all sensors, fetches weather, and decides
-# what to do with the valves and heater.
+# what to do with the valve and LED.
 #
-# Decision cases implemented:
-#   BASE CASES (as specified):
-#     Case 1: Sun is out + forecast good → start PVT flow
-#     Case 2: PVT at 60°C → fill storage tank
-#     Case 3: Supply tank low → emergency refill regardless of temperature
+# Physical setup:
+#   - PVT model tank: hot water, manually refilled — no sensors or code needed
+#   - Storage tank: one thermistor, one pressure sensor
+#   - One stepper motor valve between PVT tank and storage tank
+#   - One LED standing in for a heater
+#   - One photoresistor for sunlight detection
 #
-#   ADDITIONAL CASES (added for robustness):
-#     Case 4: Freeze protection — drain pipes if near 0°C
-#     Case 5: Storage tank overtemperature protection
-#     Case 6: Heater hysteresis — maintain storage above 50°C minimum
-#     Case 7: Night-time mode — close all valves, conserve heat
-#     Case 8: Storage full — stop filling even if PVT is hot
-#     Case 9: Cloud transient — don't stop flow for brief cloud cover
-#     Case 10: Pre-emptive heating — turn heater on early if no sun expected
+# Decision cases:
+#   Case 1:  Sun is out + forecast good → open valve, start flow into storage
+#   Case 2:  Storage full → close valve, stop filling
+#   Case 3:  Storage volume drops below threshold → print low-water alert
+#   Case 4:  Freeze protection → close valve immediately
+#   Case 5:  Overtemperature in storage → close valve, LED off
+#   Case 6:  LED hysteresis → on at 52°C, off at 60°C
+#   Case 7:  Night mode → close valve to prevent heat loss
+#   Case 8:  Cloud transient → tolerate 10 min cloud before closing valve
+#   Case 9:  Pre-emptive LED → no sun forecast + storage below target
 # ─────────────────────────────────────────────────────────────────────────────
 
 import time
@@ -24,236 +27,163 @@ import sensors
 import actuators
 import weather
 from config import (
-    TEMP_PVT_READY, TEMP_STORAGE_TARGET, TEMP_STORAGE_MINIMUM,
-    TEMP_STORAGE_HEATER_ON, TEMP_STORAGE_HEATER_OFF,
+    TEMP_PVT_READY, TEMP_STORAGE_TARGET,
+    TEMP_STORAGE_LED_ON, TEMP_STORAGE_LED_OFF,
     TEMP_FREEZE_PROTECTION,
-    LDR_SUNLIGHT_THRESHOLD, LDR_BRIGHT_SUN_THRESHOLD,
-    SUPPLY_TANK_REFILL_THRESHOLD,
-    STORAGE_TANK_MAX_VOLUME_L, SUPPLY_TANK_MAX_VOLUME_L,
-    WEATHER_FETCH_INTERVAL_S, CONTROL_LOOP_INTERVAL_S,
+    LDR_SUNLIGHT_LUX,
+    STORAGE_REFILL_THRESHOLD,
+    STORAGE_TANK_MAX_VOLUME_L,
+    WEATHER_FETCH_INTERVAL_S,
 )
 
-# ── Internal State ─────────────────────────────────────────────────────────────
-_last_weather_fetch = 0
-_pvt_flow_started_at = None   # timestamp when we opened supply valve
-_cloud_transient_start = None # timestamp when we first noticed clouds during flow
+# ── Internal state ─────────────────────────────────────────────────────────────
+_last_weather_fetch    = 0
+_valve_opened_at       = None   # Timestamp when valve was opened
+_cloud_transient_start = None   # Timestamp when cloud cover was first noticed
 
-# How long we tolerate cloud cover before stopping PVT flow (seconds)
-CLOUD_TOLERANCE_S = 600  # 10 minutes of cloud before we give up
+# How long to tolerate cloud cover before closing valve (seconds)
+CLOUD_TOLERANCE_S = 600   # 10 minutes
 
 
-# ── Helper: Read Everything ───────────────────────────────────────────────────
+# ── Sensor snapshot ────────────────────────────────────────────────────────────
 
 def read_all_sensors():
     """
     Reads and returns a unified snapshot of all sensor values.
-    Returns a dict. None values mean "sensor not responding."
+    None values mean the sensor returned an implausible reading.
     """
-    storage_temps = sensors.read_storage_temps()
-    pvt_temp      = sensors.read_pvt_temp()
-    ldr_raw       = sensors.read_ldr_raw()
-    storage_vol   = sensors.read_storage_volume_litres()
-    storage_frac  = storage_vol / STORAGE_TANK_MAX_VOLUME_L
-
-    # Derived values
-    sun_is_out    = ldr_raw >= LDR_SUNLIGHT_THRESHOLD
-    strong_sun    = ldr_raw >= LDR_BRIGHT_SUN_THRESHOLD
-
-    # Average storage temperature (ignore None sensors)
-    valid_temps = [t for t in storage_temps.values() if t is not None]
-    avg_storage_temp = sum(valid_temps) / len(valid_temps) if valid_temps else None
+    temp         = sensors.read_temp_c()
+    lux          = sensors.read_lux()
+    storage_vol  = sensors.read_storage_volume_litres()
+    storage_frac = sensors.read_storage_fill_fraction()
+    sun_out      = lux >= LDR_SUNLIGHT_LUX if lux is not None else False
 
     return {
-        'storage_top':    storage_temps['top'],
-        'storage_mid':    storage_temps['mid'],
-        'storage_bottom': storage_temps['bottom'],
-        'avg_storage':    avg_storage_temp,
-        'pvt_temp':       pvt_temp,
-        'ldr_raw':        ldr_raw,
-        'sun_is_out':     sun_is_out,
-        'strong_sun':     strong_sun,
-        'storage_vol_l':  storage_vol,
-        'storage_frac':   storage_frac,
+        'temp':         temp,
+        'lux':          lux,
+        'sun_is_out':   sun_out,
+        'storage_vol_l': storage_vol,
+        'storage_frac':  storage_frac,
     }
 
-
 def print_sensor_snapshot(s):
-    print(f"  Storage temps  → top:{s['storage_top']}°C  mid:{s['storage_mid']}°C  bot:{s['storage_bottom']}°C  avg:{s['avg_storage']}°C")
-    print(f"  PVT temp       → {s['pvt_temp']}°C")
+    print(f"  Storage temp   → {s['temp']}°C")
+    print(f"  Light level    → {s['lux']} lux  (sun_out:{s['sun_is_out']})")
     print(f"  Storage volume → {s['storage_vol_l']}L ({s['storage_frac']*100:.0f}% full)")
-    print(f"  Sunlight (LDR) → raw:{s['ldr_raw']}  sun_out:{s['sun_is_out']}  strong:{s['strong_sun']}")
     actuators.print_state()
 
 
-# ── Main Control Function ─────────────────────────────────────────────────────
+# ── Main control function ──────────────────────────────────────────────────────
 
 def run_control_loop():
     """
     Called repeatedly by main.py on a timer.
-    Reads sensors → evaluates all cases → actuates.
+    Reads sensors → evaluates all cases in priority order → actuates.
     """
-    global _last_weather_fetch, _pvt_flow_started_at, _cloud_transient_start
+    global _last_weather_fetch, _valve_opened_at, _cloud_transient_start
 
     now = time.time()
     print(f"\n{'='*55}")
     print(f"Control loop running at t={now}")
 
-    # ── 1. Refresh weather forecast if due ────────────────────────────────────
+    # ── Refresh weather forecast if due ───────────────────────────────────────
     if now - _last_weather_fetch >= WEATHER_FETCH_INTERVAL_S:
         weather.fetch_forecast()
         _last_weather_fetch = now
 
-    # ── 2. Read all sensors ───────────────────────────────────────────────────
+    # ── Read all sensors ──────────────────────────────────────────────────────
     s = read_all_sensors()
     print_sensor_snapshot(s)
 
-    # ── SAFETY FIRST: Freeze protection (Case 4) ──────────────────────────────
-    # If any sensor reads near freezing, drain the PVT pipes immediately.
-    # This prevents ice damage regardless of any other logic.
-    any_temp = [t for t in [s['storage_top'], s['storage_mid'], s['storage_bottom'], s['pvt_temp']] if t is not None]
-    if any_temp and min(any_temp) <= TEMP_FREEZE_PROTECTION:
-        print(f"\n[CASE 4] FREEZE PROTECTION — temp near {TEMP_FREEZE_PROTECTION}°C!")
-        actuators.open_storage_valve("freeze: drain PVT into storage")
-        actuators.close_supply_valve("freeze: stop cold supply")
-        # Turn heater on to protect storage water
-        actuators.heater_on("freeze: protect storage tank")
-        return  # Skip all other logic — safety first
+    temp = s['temp']
 
-    # ── SAFETY: Overtemperature in storage (Case 5) ───────────────────────────
-    # If the top of the storage tank goes way above target (e.g. >80°C),
-    # something is wrong — close all valves and heater.
-    if s['storage_top'] is not None and s['storage_top'] > 80.0:
-        print(f"\n[CASE 5] OVERTEMPERATURE in storage ({s['storage_top']}°C) — halting!")
-        actuators.emergency_stop("Storage overtemperature")
+    # ── CASE 4: Freeze protection ─────────────────────────────────────────────
+    # Highest priority — if temperature is near freezing, close the valve
+    # immediately to stop cold water from circulating.
+    if temp is not None and temp <= TEMP_FREEZE_PROTECTION:
+        print(f"\n[CASE 4] FREEZE PROTECTION — temp {temp}°C ≤ {TEMP_FREEZE_PROTECTION}°C")
+        actuators.close_valve("Case 4: freeze protection")
+        actuators.led_on("Case 4: freeze — protecting storage water with heat")
         return
 
-    # ── PRIORITY 1: Supply tank refill / minimum demand (Case 3) ──────────────
-    # We model supply tank volume by assuming it started full and track what
-    # left. For now we use the storage volume indirectly.
-    # NOTE: In a real system you would add a pressure sensor to the supply tank.
-    # Here we use a placeholder fraction — replace with real supply sensor.
-    supply_frac = _estimate_supply_fraction(s)
+    # ── CASE 5: Overtemperature ───────────────────────────────────────────────
+    # If storage exceeds a safe ceiling something is wrong — stop everything.
+    if temp is not None and temp > 80.0:
+        print(f"\n[CASE 5] OVERTEMPERATURE — storage at {temp}°C")
+        actuators.emergency_stop("Case 5: overtemperature")
+        return
 
-    if supply_frac < (1.0 - SUPPLY_TANK_REFILL_THRESHOLD):
-        # Supply critically low (below refill threshold)
-        print(f"\n[CASE 3] Supply tank low ({supply_frac*100:.0f}%) — emergency refill from PVT")
+    # ── CASE 3: Storage volume low — print alert ──────────────────────────────
+    # No hardware action is taken. Prints a message so the team knows to
+    # manually refill. The rest of the loop continues normally.
+    if s['storage_frac'] < (1.0 - STORAGE_REFILL_THRESHOLD):
+        print(f"\n[CASE 3] ⚠️  LOW WATER ALERT: Storage at {s['storage_frac']*100:.0f}%.")
+        print(f"         There is a sudden drop in water level — storage tank needs to be refilled manually.")
 
-        # Estimate mixing temperature: PVT water (cold or warm) into storage
-        # We assume PVT holds roughly 20L (set this to your pipe+panel volume)
-        PVT_PIPE_VOLUME_L = 20.0
-        pvt_t   = s['pvt_temp']   if s['pvt_temp']   is not None else 15.0
-        stor_t  = s['avg_storage'] if s['avg_storage'] is not None else 60.0
-        stor_vol = s['storage_vol_l']
+    # ── CASE 2: Storage full → close valve ───────────────────────────────────
+    if s['storage_frac'] >= 0.99:
+        print(f"\n[CASE 2] Storage full — closing valve")
+        actuators.close_valve("Case 2: storage tank full")
+        _valve_opened_at = None
+        # Don't return — still need to evaluate LED cases below
 
-        mixed_temp = sensors.estimate_mixed_temp(
-            stor_t, pvt_t,
-            stor_vol, PVT_PIPE_VOLUME_L
-        )
-        print(f"  Estimated mixed storage temp if refilled: {mixed_temp:.1f}°C")
-
-        # Open both valves to push water through
-        actuators.open_supply_valve("Case 3: emergency refill")
-        actuators.open_storage_valve("Case 3: emergency refill")
-
-        # If mixing will drop below minimum, pre-emptively turn on heater
-        if mixed_temp is not None and mixed_temp < TEMP_STORAGE_MINIMUM:
-            print(f"  Mixed temp {mixed_temp:.1f}°C < minimum {TEMP_STORAGE_MINIMUM}°C — turning heater ON")
-            actuators.heater_on("Case 3: temp will drop below minimum after refill")
-        return  # Don't evaluate lower-priority cases this cycle
-
-    # ── PRIORITY 2: Fill storage from hot PVT (Case 2) ────────────────────────
-    pvt_ready = (s['pvt_temp'] is not None and s['pvt_temp'] >= TEMP_PVT_READY)
-    storage_full = s['storage_frac'] >= 0.99
-
-    if pvt_ready and not storage_full:
-        print(f"\n[CASE 2] PVT hot ({s['pvt_temp']}°C ≥ {TEMP_PVT_READY}°C) — filling storage")
-
-        if storage_full:
-            # Case 8: Storage full — don't overflow it
-            print(f"  [CASE 8] Storage full — closing storage valve")
-            actuators.close_storage_valve("Case 8: storage full")
-            actuators.close_supply_valve("Case 8: storage full, stopping PVT flow")
-        else:
-            actuators.open_supply_valve("Case 2: PVT hot, continue flow")
-            actuators.open_storage_valve("Case 2: PVT hot, filling storage")
-            _pvt_flow_started_at = _pvt_flow_started_at or now
-
-    # ── PRIORITY 3: Start PVT flow when sun is out (Case 1) ───────────────────
-    elif not pvt_ready and not actuators.supply_valve_is_open():
-        # PVT is not yet hot — should we start the flow?
+    # ── CASE 1: Sun out + good forecast → open valve ──────────────────────────
+    elif not actuators.valve_is_open():
         sun_out         = s['sun_is_out']
         sun_forecast_ok = weather.sun_will_last_long_enough()
 
-        print(f"\n[CASE 1] Considering starting PVT flow: sun_out={sun_out}, forecast_ok={sun_forecast_ok}")
+        print(f"\n[CASE 1] Considering opening valve: sun_out={sun_out}, forecast_ok={sun_forecast_ok}")
 
         if sun_out and (sun_forecast_ok is True or sun_forecast_ok is None):
-            # Sun is out now AND forecast looks good (or forecast unavailable — err on sunny side)
-            print(f"  Sun confirmed — opening supply valve to start PVT heating")
-            actuators.open_supply_valve("Case 1: sun is out, forecast good")
-            actuators.close_storage_valve("Case 1: PVT not hot yet, keep storage closed")
-            _pvt_flow_started_at = now
+            print(f"  Sun confirmed — opening valve to fill storage from PVT tank")
+            actuators.open_valve("Case 1: sun out, forecast good")
+            _valve_opened_at       = now
+            _cloud_transient_start = None
         else:
-            # No sun or forecast bad — make sure valves are closed
-            actuators.close_supply_valve("Case 1: no sun or poor forecast")
-            actuators.close_storage_valve("Case 1: no sun or poor forecast")
-            _pvt_flow_started_at = None
+            actuators.close_valve("Case 1: no sun or poor forecast")
+            _valve_opened_at = None
 
-    # ── Case 9: Cloud transient during active PVT flow ────────────────────────
-    # If sun disappears briefly, don't immediately stop — give it CLOUD_TOLERANCE_S
-    elif actuators.supply_valve_is_open() and not s['sun_is_out'] and not pvt_ready:
+    # ── CASE 8: Cloud transient during active flow ────────────────────────────
+    # If sun disappears while valve is open, give it CLOUD_TOLERANCE_S before
+    # closing. Brief cloud cover should not interrupt an active fill cycle.
+    elif actuators.valve_is_open() and not s['sun_is_out']:
         if _cloud_transient_start is None:
             _cloud_transient_start = now
-            print(f"\n[CASE 9] Cloud transient — watching (tolerance={CLOUD_TOLERANCE_S}s)")
+            print(f"\n[CASE 8] Cloud cover detected — watching for {CLOUD_TOLERANCE_S}s")
         elif now - _cloud_transient_start > CLOUD_TOLERANCE_S:
-            print(f"\n[CASE 9] Cloud persisted >{CLOUD_TOLERANCE_S}s — stopping PVT flow")
-            actuators.close_supply_valve("Case 9: prolonged cloud cover")
-            actuators.close_storage_valve("Case 9: prolonged cloud cover")
-            _pvt_flow_started_at  = None
+            print(f"\n[CASE 8] Cloud persisted >{CLOUD_TOLERANCE_S}s — closing valve")
+            actuators.close_valve("Case 8: prolonged cloud cover")
+            _valve_opened_at       = None
             _cloud_transient_start = None
     else:
-        _cloud_transient_start = None  # Reset transient timer if sun returned
+        # Sun returned — reset cloud transient timer
+        _cloud_transient_start = None
 
-    # ── HEATER CONTROL ────────────────────────────────────────────────────────
+    # ── CASE 7: Night / dark mode ─────────────────────────────────────────────
+    # If it's dark and no flow is active, ensure valve is closed to prevent
+    # convective cooling of stored water back through the cold pipe circuit.
+    if not s['sun_is_out'] and not actuators.valve_is_open():
+        if actuators.valve_is_open():
+            print(f"\n[CASE 7] Dark/night — closing valve to prevent heat loss")
+            actuators.close_valve("Case 7: night mode")
 
-    avg = s['avg_storage']
+    # ── LED CONTROL ───────────────────────────────────────────────────────────
 
-    if avg is not None:
+    if temp is not None:
 
-        # Case 6: Heater hysteresis — maintain storage above minimum
-        if avg <= TEMP_STORAGE_HEATER_ON and not actuators.heater_is_on():
-            print(f"\n[CASE 6] Storage avg {avg:.1f}°C ≤ heater-on threshold {TEMP_STORAGE_HEATER_ON}°C — heater ON")
-            actuators.heater_on("Case 6: storage temp below heater-on threshold")
+        # Case 6: Hysteresis band — LED on at 52°C, off at 60°C
+        if temp <= TEMP_STORAGE_LED_ON and not actuators.led_is_on():
+            print(f"\n[CASE 6] Storage at {temp}°C ≤ {TEMP_STORAGE_LED_ON}°C — LED ON (would heat water)")
+            actuators.led_on("Case 6: storage below LED-on threshold")
 
-        elif avg >= TEMP_STORAGE_HEATER_OFF and actuators.heater_is_on():
-            print(f"\n[CASE 6] Storage avg {avg:.1f}°C ≥ target {TEMP_STORAGE_HEATER_OFF}°C — heater OFF")
-            actuators.heater_off("Case 6: storage reached target temp")
+        elif temp >= TEMP_STORAGE_LED_OFF and actuators.led_is_on():
+            print(f"\n[CASE 6] Storage at {temp}°C ≥ {TEMP_STORAGE_LED_OFF}°C — LED OFF")
+            actuators.led_off("Case 6: storage reached target temp")
 
-        # Case 10: Pre-emptive heating — if no sunshine expected in next 12h,
-        # use off-peak grid to top up storage before it drops below minimum
+        # Case 9: Pre-emptive LED — no sun expected + storage below target
         sunshine_hours = weather.get_next_sunshine_hours()
-        if sunshine_hours == 0 and avg < TEMP_STORAGE_TARGET and not actuators.heater_is_on():
-            print(f"\n[CASE 10] No sun expected for 12h + storage at {avg:.1f}°C — pre-heating")
-            actuators.heater_on("Case 10: no solar expected, pre-heating storage")
-
-    # ── Case 7: Night-time / low-light passive mode ───────────────────────────
-    # If LDR says it's dark and no flow is happening, ensure valves are closed
-    # to prevent convective cooling of storage through the pipe circuit.
-    if not s['sun_is_out'] and not actuators.supply_valve_is_open():
-        if actuators.storage_valve_is_open():
-            print(f"\n[CASE 7] Night/dark mode — closing storage valve to prevent heat loss")
-            actuators.close_storage_valve("Case 7: night mode, prevent convective loss")
+        if sunshine_hours == 0 and temp < TEMP_STORAGE_TARGET and not actuators.led_is_on():
+            print(f"\n[CASE 9] No sun expected for 12h + storage at {temp}°C — LED ON (pre-emptive)")
+            actuators.led_on("Case 9: no solar expected, pre-emptive heating signal")
 
     print(f"\nControl loop complete.")
-
-
-# ── Placeholder: supply tank volume estimate ───────────────────────────────────
-
-def _estimate_supply_fraction(s):
-    """
-    Placeholder for supply tank volume.
-    In a full implementation, you would read a pressure sensor on the supply tank.
-    For now, returns a fixed 1.0 (full) so Case 3 never triggers by default.
-    Replace this with your real supply sensor reading.
-    """
-    # TODO: Replace with: return sensors.read_supply_volume_litres() / SUPPLY_TANK_MAX_VOLUME_L
-    return 1.0
