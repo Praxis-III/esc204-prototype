@@ -1,0 +1,53 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb}
+
+\begin{document}
+
+\subsection{Problem Setup}
+
+Let $D(t)$, $S(t)$, $E(t)$ be water demand, solar supply, and electric heating rate (volume per unit time).  
+Tank capacity is $X$.
+
+Constraint (for all intervals $T$):
+\[
+\int_T \bigl( D(t) - S(t) - E(t) \bigr)\, dt \leq X
+\]
+
+Objective: minimize total electric heating
+\[
+\int E(t)\, dt
+\]
+
+\subsection{Robust Receding-Horizon Controller}
+
+Discretize time with step $\Delta t$. At each time $k$:
+
+- Current cumulative deficit: $U_k = \int_0^{t_k} (D - S - E)\, dt$
+- Historical minimum: $m_k = \min_{s \leq t_k} U(s)$
+- Remaining buffer: $r_k = X - (U_k - m_k)$
+
+Forecast horizon: $H$ steps ($\approx$ 1 hour).
+
+Use worst-case forecasts over uncertainty sets:
+\[
+\hat{D}_{k+i}^\text{w} = \hat{D}_{k+i} + \delta_D(i), \quad
+\hat{S}_{k+i}^\text{w} = \hat{S}_{k+i} - \delta_S(i)
+\]
+
+Solve the following linear program at each $k$:
+
+\begin{alignat*}{3}
+&\text{minimize}   &\quad& \sum_{i=1}^H E_i \Delta t \\
+&\text{subject to} &\quad& E_i \geq 0, \quad i=1,\dots,H \\
+&                  && U_{k+i} = U_k + \sum_{j=1}^i \bigl( \hat{D}_{k+j}^\text{w} - \hat{S}_{k+j}^\text{w} - E_j \bigr) \Delta t \\
+&                  && m_0 = m_k \\
+&                  && m_i \leq m_{i-1},\quad m_i \leq U_{k+i} \quad \forall\, i=1,\dots,H \\
+&                  && U_{k+i} \leq m_i + X \quad \forall\, i=1,\dots,H
+\end{alignat*}
+
+Apply only the first decision: $E(t) = E_1^*$ for the next $\Delta t$.  
+Update $U$ and $m$ with actual measurements at the next step and re-solve.
+
+This ensures the tank constraint holds for all possible realizations within the uncertainty bounds while minimizing electric heating.
+
+\end{document}

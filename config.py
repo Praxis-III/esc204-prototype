@@ -11,7 +11,7 @@
 #         and PRESSURE_VOLTAGE_AT_FULL
 # [ ] 6. Re-upload config.py after all changes
 # ============================================================
-
+import board
 
 # config.py
 # ─────────────────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ LONGITUDE = -0.1278
 ONEWIRE_PIN = 4         # GPIO4 — connect all DS18B20 data lines here
 
 # Photoresistor (LDR) — connect via a voltage divider to an ADC pin
-PHOTORESISTOR_PIN = 26  # GPIO26 (ADC0)
+PHOTORESISTOR_PIN = board.A0  # GPIO26 (ADC0)
 
 # Valve motor — supply tank (controls flow from supply tank into PVT)
 MOTOR_SUPPLY_PIN = 14   # GPIO14
