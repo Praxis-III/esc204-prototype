@@ -10,8 +10,8 @@ WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"
 
 # ── Location (for weather API) ────────────────────────────────────────────────
 # Find your coordinates at: https://www.latlong.net/
-LATITUDE  = 51.5074   # Example: London
-LONGITUDE = -0.1278
+LATITUDE  = 43.653225   # Example: London
+LONGITUDE = -79.383186
 
 # ── GPIO Pin Assignments ──────────────────────────────────────────────────────
 
