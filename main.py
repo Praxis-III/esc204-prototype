@@ -1,6 +1,6 @@
 # main.py
 # ─────────────────────────────────────────────────────────────────────────────
-# Entry point. Runs after boot.py has connected to Wi-Fi.
+# Entry point. Weather data is fed over USB serial from a laptop-side script.
 # Starts the control loop and keeps it running forever.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -17,9 +17,10 @@ print("="*55)
 # ── Initial safety state: everything off ──────────────────────────────────────
 actuators.emergency_stop("Startup: initialising to safe state")
 
-# ── Fetch initial weather before first control loop ───────────────────────────
-print("\nFetching initial weather forecast...")
-weather.fetch_forecast()
+# ── Optionally wait briefly for first serial weather packet ───────────────────
+print("\nWaiting briefly for initial weather packet on USB serial...")
+if weather.wait_for_initial_forecast(timeout_s=5) is None:
+    print("  No weather packet received yet. Continuing with unknown forecast.")
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 print(f"\nEntering control loop (interval: {CONTROL_LOOP_INTERVAL_S}s)\n")

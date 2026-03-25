@@ -17,7 +17,7 @@ class Photo:
         self.B_CONST = 1.4
 
     # ===== HELPER: AVERAGE ADC =====
-    def read_avg(self, pin, samples=10):
+    def read_avg(self, samples=10):
         total = 0
         for _ in range(samples):
             total += self.photoresistor.value

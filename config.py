@@ -4,10 +4,6 @@
 # Edit this file to match your hardware setup and preferences.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── Wi-Fi ─────────────────────────────────────────────────────────────────────
-WIFI_SSID     = "YOUR_WIFI_NAME"
-WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"
-
 # ── Location (for weather API) ────────────────────────────────────────────────
 # Find your coordinates at: https://www.latlong.net/
 LATITUDE  = 43.653225   # Example: London
@@ -75,11 +71,6 @@ PRESSURE_DRIFT_ALPHA        = 0.001    # Zero-point drift correction
 PRESSURE_DRIFT_THRESHOLD_KG = 0.02     # Drift-correct only near zero
 PRESSURE_DEADBAND_KG        = 0.005    # Snap tiny values to zero
 
-# Legacy ADC calibration fallback (used only if HX711 library is unavailable)
-PRESSURE_PIN              = 22
-PRESSURE_VOLTAGE_AT_EMPTY = 0.5
-PRESSURE_VOLTAGE_AT_FULL  = 3.0
-
 # ── Temperature Thresholds (°C) ───────────────────────────────────────────────
 TEMP_PVT_READY       = 60.0   # PVT tank temp required before valve opens
 TEMP_STORAGE_TARGET  = 60.0   # Desired storage tank temperature
@@ -89,8 +80,7 @@ TEMP_STORAGE_LED_OFF = 60.0   # Turn LED off once storage reaches this temp
 TEMP_FREEZE_PROTECTION = 4.0  # If either sensor reads below this, close valve
 
 # ── Weather / Timing Parameters ───────────────────────────────────────────────
-WEATHER_FETCH_INTERVAL_S = 900   # Fetch weather every 15 minutes (seconds)
 PVT_HEAT_TIME_HOURS      = 1.0   # Expected hours for water to heat in PVT
 
 # ── Control Loop ──────────────────────────────────────────────────────────────
-CONTROL_LOOP_INTERVAL_S = 30     # Run the main decision loop every 30 seconds
+CONTROL_LOOP_INTERVAL_S = 5     # Run the main decision loop every 30 seconds

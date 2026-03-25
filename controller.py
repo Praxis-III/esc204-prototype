@@ -39,11 +39,9 @@ from config import (
     LDR_SUNLIGHT_LUX,
     STORAGE_REFILL_THRESHOLD,
     STORAGE_TANK_MAX_VOLUME_L,
-    WEATHER_FETCH_INTERVAL_S,
 )
 
 # ── Internal state ─────────────────────────────────────────────────────────────
-_last_weather_fetch    = 0
 _valve_opened_at       = None
 _cloud_transient_start = None
 
@@ -90,16 +88,16 @@ def run_control_loop():
     Called repeatedly by main.py on a timer.
     Reads sensors → evaluates all cases in priority order → actuates.
     """
-    global _last_weather_fetch, _valve_opened_at, _cloud_transient_start
+    global _valve_opened_at, _cloud_transient_start
 
     now = time.time()
     print(f"\n{'='*55}")
     print(f"Control loop running at t={now}")
 
-    # ── Refresh weather forecast if due ───────────────────────────────────────
-    if now - _last_weather_fetch >= WEATHER_FETCH_INTERVAL_S:
-        weather.fetch_forecast()
-        _last_weather_fetch = now
+    # ── Pull in any weather packets that arrived over USB serial ──────────────
+    weather_updates = weather.poll_serial(max_lines=10)
+    if weather_updates > 0:
+        print(f"  Applied {weather_updates} weather update(s) from serial.")
 
     # ── Read all sensors ──────────────────────────────────────────────────────
     s = read_all_sensors()

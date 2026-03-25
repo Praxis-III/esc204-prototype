@@ -182,9 +182,9 @@ The controller runs every 30 seconds. Cases are evaluated in priority order. Whe
 
 ## 7. Weather Forecast Integration
 
-The system fetches an hourly forecast from the Open-Meteo API every 15 minutes. The two variables used are hourly cloud cover (0–100%) and precipitation (mm/hr). A forecast window equal to the expected PVT heat-up time is evaluated — if average cloud cover is below 50% and precipitation is below 0.5mm/hr across that window, the forecast is considered favourable.
+The laptop-side bridge script fetches an hourly forecast from the Open-Meteo API and sends it to the Pico over USB serial. The two variables used are hourly cloud cover (0-100%) and precipitation (mm/hr). A forecast window equal to the expected PVT heat-up time is evaluated: if average cloud cover is below 50% and precipitation is below 0.5mm/hr across that window, the forecast is considered favourable.
 
-If the network is unavailable, the forecast returns `None`. The controller treats an unknown forecast as permissive and will still start flow based on the photoresistor alone. The system degrades gracefully rather than refusing to operate without an internet connection.
+If no weather packet has arrived yet, the forecast returns `None`. The controller treats an unknown forecast as permissive and will still start flow based on the photoresistor alone. The system degrades gracefully rather than refusing to operate.
 
 ---
 
@@ -192,14 +192,16 @@ If the network is unavailable, the forecast returns `None`. The controller treat
 
 1. Install MicroPython on the Pico W (hold BOOTSEL, plug in USB, drag `.uf2` file onto RPI-RP2 drive)
 2. Install Thonny IDE from [thonny.org](https://thonny.org)
-3. Edit `config.py`: set `WIFI_SSID`, `WIFI_PASSWORD`, `LATITUDE`, `LONGITUDE`
+3. Edit `config.py`: set `LATITUDE` and `LONGITUDE`
 4. Verify GPIO pin numbers in `config.py` match your physical wiring
 5. Upload all `.py` files to the Pico W via Thonny (File → Save As → Raspberry Pi Pico)
-6. In Thonny REPL: `import sensors` then `sensors.scan_sensors()` — note all printed addresses
-7. Identify which address belongs to which physical sensor (use warm/cold water to distinguish)
-8. Paste the four addresses into `config.py`
-9. Calibrate pressure sensor: record voltage at empty and full tank, update `config.py`
-10. Re-upload `config.py`, press reset — system starts automatically
+6. On laptop: `pip install requests pyserial`
+7. On laptop: run `python software/weather_serial_sender.py --port /dev/tty.usbmodemXXXX`
+8. In Thonny REPL: `import sensors` then `sensors.scan_sensors()` — note all printed addresses
+9. Identify which address belongs to which physical sensor (use warm/cold water to distinguish)
+10. Paste the four addresses into `config.py`
+11. Calibrate pressure sensor: record voltage at empty and full tank, update `config.py`
+12. Re-upload `config.py`, press reset — system starts automatically
 
 ---
 
@@ -221,19 +223,17 @@ Complete before first real run. All changes go in `config.py` only.
 
 | # | Item | Variable | Done |
 |---|---|---|---|
-| 1 | Wi-Fi network name | `WIFI_SSID` | ☐ |
-| 2 | Wi-Fi password | `WIFI_PASSWORD` | ☐ |
-| 3 | GPS latitude of installation | `LATITUDE` | ☐ |
-| 4 | GPS longitude of installation | `LONGITUDE` | ☐ |
-| 5 | GPIO pin numbers verified against wiring | All `*_PIN` values | ☐ |
-| 6 | DS18B20 storage top address | `DS18B20_STORAGE_TOP` | ☐ |
-| 7 | DS18B20 storage mid address | `DS18B20_STORAGE_MID` | ☐ |
-| 8 | DS18B20 storage bottom address | `DS18B20_STORAGE_BOTTOM` | ☐ |
-| 9 | DS18B20 PVT panel address | `DS18B20_PVT` | ☐ |
-| 10 | Pressure sensor voltage at empty tank | `PRESSURE_VOLTAGE_AT_EMPTY` | ☐ |
-| 11 | Pressure sensor voltage at full tank | `PRESSURE_VOLTAGE_AT_FULL` | ☐ |
-| 12 | Actual storage tank max volume (litres) | `STORAGE_TANK_MAX_VOLUME_L` | ☐ |
-| 13 | Actual supply tank max volume (litres) | `SUPPLY_TANK_MAX_VOLUME_L` | ☐ |
+| 1 | GPS latitude of installation | `LATITUDE` | ☐ |
+| 2 | GPS longitude of installation | `LONGITUDE` | ☐ |
+| 3 | GPIO pin numbers verified against wiring | All `*_PIN` values | ☐ |
+| 4 | DS18B20 storage top address | `DS18B20_STORAGE_TOP` | ☐ |
+| 5 | DS18B20 storage mid address | `DS18B20_STORAGE_MID` | ☐ |
+| 6 | DS18B20 storage bottom address | `DS18B20_STORAGE_BOTTOM` | ☐ |
+| 7 | DS18B20 PVT panel address | `DS18B20_PVT` | ☐ |
+| 8 | Pressure sensor voltage at empty tank | `PRESSURE_VOLTAGE_AT_EMPTY` | ☐ |
+| 9 | Pressure sensor voltage at full tank | `PRESSURE_VOLTAGE_AT_FULL` | ☐ |
+| 10 | Actual storage tank max volume (litres) | `STORAGE_TANK_MAX_VOLUME_L` | ☐ |
+| 11 | Actual supply tank max volume (litres) | `SUPPLY_TANK_MAX_VOLUME_L` | ☐ |
 
 
 # esc204-prototype
