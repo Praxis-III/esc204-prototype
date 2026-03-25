@@ -56,17 +56,17 @@ LDR_SUNLIGHT_LUX   = 1000.0    # Lux above which sun is considered out
 LDR_BRIGHT_SUN_LUX = 5000.0    # Lux for strong direct sunlight
 
 # ── Tank & System Parameters ──────────────────────────────────────────────────
-STORAGE_TANK_MAX_VOLUME_L = 200.0   # Litres — physical capacity of storage tank
+STORAGE_TANK_MAX_VOLUME_L = 0.539   # Litres — physical capacity of storage tank
 STORAGE_REFILL_THRESHOLD  = 0.80    # Print alert when storage drops below 80%
 
 # Pressure sensor calibration (HX711)
 # CALIBRATION_FACTOR converts raw HX711 counts into kilograms.
 # 1 kg of water is assumed to be approximately 1 litre.
-PRESSURE_CALIBRATION_FACTOR = 19000.0
+PRESSURE_CALIBRATION_FACTOR = 434713.0
 PRESSURE_SAMPLE_COUNT       = 9        # Median window size (odd number)
 PRESSURE_SAMPLE_DELAY_S     = 0.005    # Delay between raw HX711 reads
 PRESSURE_TARE_SAMPLES       = 25
-PRESSURE_EMA_ALPHA          = 0.1      # Live reading smoothing
+PRESSURE_EMA_ALPHA          = 0.7      # Live reading smoothing
 PRESSURE_DRIFT_ALPHA        = 0.001    # Zero-point drift correction
 PRESSURE_DRIFT_THRESHOLD_KG = 0.02     # Drift-correct only near zero
 PRESSURE_DEADBAND_KG        = 0.005    # Snap tiny values to zero
