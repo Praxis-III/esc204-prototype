@@ -31,9 +31,10 @@ PHOTORESISTOR_PIN = 26        # GPIO26 (ADC0)
 # LED — signals that water would be heated in this state (stands in for heater)
 LED_PIN = 15                  # GPIO15
 
-# Pressure sensor — storage tank
-# NOTE: Pin placeholder — assign to correct pin when hardware is available
-PRESSURE_PIN = 22             # GPIO22 (placeholder, update when hardware ready)
+# Pressure sensor (HX711 load cell amplifier) — storage tank
+# DATA and CLOCK follow the corrected hardware wiring.
+PRESSURE_DATA_PIN  = 3         # GPIO3 (HX711 DOUT)
+PRESSURE_CLOCK_PIN = 2         # GPIO2 (HX711 SCK)
 
 # ── Stepper Motor Parameters ──────────────────────────────────────────────────
 MOTOR_STEPS_PER_REV  = 500     # Steps for one full revolution
@@ -62,10 +63,22 @@ LDR_BRIGHT_SUN_LUX = 5000.0    # Lux for strong direct sunlight
 STORAGE_TANK_MAX_VOLUME_L = 200.0   # Litres — physical capacity of storage tank
 STORAGE_REFILL_THRESHOLD  = 0.80    # Print alert when storage drops below 80%
 
-# Pressure sensor calibration
-# Measure output voltage with empty and full tank, set values below.
-PRESSURE_VOLTAGE_AT_EMPTY = 0.5   # Volts at empty
-PRESSURE_VOLTAGE_AT_FULL  = 3.0   # Volts at full
+# Pressure sensor calibration (HX711)
+# CALIBRATION_FACTOR converts raw HX711 counts into kilograms.
+# 1 kg of water is assumed to be approximately 1 litre.
+PRESSURE_CALIBRATION_FACTOR = 19000.0
+PRESSURE_SAMPLE_COUNT       = 9        # Median window size (odd number)
+PRESSURE_SAMPLE_DELAY_S     = 0.005    # Delay between raw HX711 reads
+PRESSURE_TARE_SAMPLES       = 25
+PRESSURE_EMA_ALPHA          = 0.1      # Live reading smoothing
+PRESSURE_DRIFT_ALPHA        = 0.001    # Zero-point drift correction
+PRESSURE_DRIFT_THRESHOLD_KG = 0.02     # Drift-correct only near zero
+PRESSURE_DEADBAND_KG        = 0.005    # Snap tiny values to zero
+
+# Legacy ADC calibration fallback (used only if HX711 library is unavailable)
+PRESSURE_PIN              = 22
+PRESSURE_VOLTAGE_AT_EMPTY = 0.5
+PRESSURE_VOLTAGE_AT_FULL  = 3.0
 
 # ── Temperature Thresholds (°C) ───────────────────────────────────────────────
 TEMP_PVT_READY       = 60.0   # PVT tank temp required before valve opens

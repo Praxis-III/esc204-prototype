@@ -14,14 +14,20 @@
 
 import machine
 import math
+import time
 from config import (
     THERMISTOR_STORAGE_PIN, THERMISTOR_PVT_PIN,
-    PHOTORESISTOR_PIN, PRESSURE_PIN,
+    PHOTORESISTOR_PIN,
     THERM_NOMINAL_RESISTANCE, THERM_NOMINAL_TEMP_C,
     THERM_B_COEFFICIENT, THERM_SERIES_RESISTOR, THERM_OFFSET,
     LDR_FIXED_RESISTOR, LDR_A_CONST, LDR_B_CONST,
     LDR_SUNLIGHT_LUX, LDR_BRIGHT_SUN_LUX,
-    PRESSURE_VOLTAGE_AT_EMPTY, PRESSURE_VOLTAGE_AT_FULL,
+    PRESSURE_DATA_PIN, PRESSURE_CLOCK_PIN,
+    PRESSURE_CALIBRATION_FACTOR,
+    PRESSURE_SAMPLE_COUNT, PRESSURE_SAMPLE_DELAY_S,
+    PRESSURE_TARE_SAMPLES,
+    PRESSURE_EMA_ALPHA, PRESSURE_DRIFT_ALPHA,
+    PRESSURE_DRIFT_THRESHOLD_KG, PRESSURE_DEADBAND_KG,
     STORAGE_TANK_MAX_VOLUME_L,
 )
 
@@ -29,7 +35,6 @@ from config import (
 _therm_storage_adc = machine.ADC(THERMISTOR_STORAGE_PIN)
 _therm_pvt_adc     = machine.ADC(THERMISTOR_PVT_PIN)
 _ldr_adc           = machine.ADC(PHOTORESISTOR_PIN)
-_pressure_adc      = machine.ADC(PRESSURE_PIN)
 
 # Pico W: 16-bit ADC, 3.3V reference
 _ADC_MAX = 65535
@@ -131,22 +136,83 @@ def sun_is_out():
 
 # ── Pressure Sensor (Storage Tank Volume) ────────────────────────────────────
 
+class PressureSensor:
+    """
+    Pressure/weight sensor wrapper using local hx711.py driver.
+    """
+
+    def __init__(self):
+        self._offset = None
+        self._smoothed_kg = 0.0
+        self._hx = None
+
+        self._setup_hx711()
+
+    def _setup_hx711(self):
+        try:
+            from hx711 import HX711
+        except ImportError:
+            raise RuntimeError("Local hx711.py driver is required for pressure sensor support")
+
+        self._hx = HX711(PRESSURE_DATA_PIN, PRESSURE_CLOCK_PIN, channel=HX711.CHANNEL_A_128)
+
+        # One-time tare at startup, matching the corrected acquisition flow.
+        time.sleep(3)
+        tare_samples = [self._median_raw() for _ in range(PRESSURE_TARE_SAMPLES)]
+        self._offset = float(sum(tare_samples) / PRESSURE_TARE_SAMPLES)
+        self._smoothed_kg = self._raw_to_kg(self._median_raw())
+
+    def _read_raw_once(self):
+        time.sleep(PRESSURE_SAMPLE_DELAY_S)
+        if self._hx is None:
+            raise RuntimeError("HX711 channel not initialized")
+        return self._hx.read()
+
+    def _median_raw(self, n=PRESSURE_SAMPLE_COUNT):
+        samples = [self._read_raw_once() for _ in range(n)]
+        samples.sort()
+        return samples[n // 2]
+
+    def _raw_to_kg(self, raw):
+        return (raw - self._offset) / PRESSURE_CALIBRATION_FACTOR
+
+    def _read_volume_hx711_litres(self):
+        if self._offset is None:
+            raise RuntimeError("HX711 tare offset not initialized")
+
+        raw = self._median_raw()
+        weight_kg = self._raw_to_kg(raw)
+
+        # Exponential moving average for stable live values.
+        self._smoothed_kg = (
+            PRESSURE_EMA_ALPHA * weight_kg
+            + (1.0 - PRESSURE_EMA_ALPHA) * self._smoothed_kg
+        )
+
+        # Correct slow offset drift only when the tank appears near zero.
+        if abs(self._smoothed_kg) < PRESSURE_DRIFT_THRESHOLD_KG:
+            self._offset = (
+                (1.0 - PRESSURE_DRIFT_ALPHA) * self._offset
+                + PRESSURE_DRIFT_ALPHA * raw
+            )
+
+        kg = 0.0 if abs(self._smoothed_kg) < PRESSURE_DEADBAND_KG else self._smoothed_kg
+        litres = max(0.0, min(STORAGE_TANK_MAX_VOLUME_L, kg))
+        return round(litres, 2)
+
+    def read_volume_litres(self):
+        return self._read_volume_hx711_litres()
+
+
+_pressure_sensor = PressureSensor()
+
 def read_storage_volume_litres():
     """
     Reads the pressure sensor and converts to volume in litres.
-    Uses linear interpolation between the two calibration voltages in config.py.
-    Water density assumed 1 kg/L.
+    Uses HX711 weight conversion.
+    Water density is assumed 1 kg/L.
     """
-    raw   = _read_avg(_pressure_adc)
-    volts = _adc_to_voltage(raw)
-
-    volt_range = PRESSURE_VOLTAGE_AT_FULL - PRESSURE_VOLTAGE_AT_EMPTY
-    if volt_range == 0:
-        return 0.0
-
-    fraction = (volts - PRESSURE_VOLTAGE_AT_EMPTY) / volt_range
-    fraction = max(0.0, min(1.0, fraction))
-    return round(fraction * STORAGE_TANK_MAX_VOLUME_L, 2)
+    return _pressure_sensor.read_volume_litres()
 
 def read_storage_fill_fraction():
     """Returns storage tank fill level as 0.0 (empty) to 1.0 (full)."""
