@@ -83,4 +83,5 @@ TEMP_FREEZE_PROTECTION = 4.0  # If either sensor reads below this, close valve
 PVT_HEAT_TIME_HOURS      = 1.0   # Expected hours for water to heat in PVT
 
 # ── Control Loop ──────────────────────────────────────────────────────────────
+TESTING_MODE = True         # True = use CUSTOM_DATA packets instead of real sensors
 CONTROL_LOOP_INTERVAL_S = 5     # Run the main decision loop every 30 seconds

@@ -31,6 +31,7 @@ import time
 import sensors
 import actuators
 import weather
+import custom_data
 from config import (
     TEMP_PVT_READY,
     TEMP_STORAGE_TARGET,
@@ -39,6 +40,7 @@ from config import (
     LDR_SUNLIGHT_LUX,
     STORAGE_REFILL_THRESHOLD,
     STORAGE_TANK_MAX_VOLUME_L,
+    TESTING_MODE,
 )
 
 # ── Internal state ─────────────────────────────────────────────────────────────
@@ -73,6 +75,15 @@ def read_all_sensors():
         'storage_frac':  storage_frac,
     }
 
+
+def read_custom_data():
+    """Returns latest custom test snapshot, falling back to physical sensors."""
+    snapshot = custom_data.get_latest_snapshot()
+    if snapshot is None:
+        print("  No custom data received yet; falling back to physical sensors.")
+        return read_all_sensors()
+    return snapshot
+
 def print_sensor_snapshot(s):
     print(f"  Storage temp   → {s['storage_temp']}°C")
     print(f"  PVT temp       → {s['pvt_temp']}°C  (ready:{s['pvt_ready']})")
@@ -100,7 +111,9 @@ def run_control_loop():
         print(f"  Applied {weather_updates} weather update(s) from serial.")
 
     # ── Read all sensors ──────────────────────────────────────────────────────
-    s = read_all_sensors()
+    s = read_all_sensors() if not TESTING_MODE else read_custom_data()
+    if TESTING_MODE:
+        print("  Sensor source   -> custom test data")
     print_sensor_snapshot(s)
 
     storage_temp = s['storage_temp']
@@ -137,9 +150,13 @@ def run_control_loop():
     # favourable; PVT thermistor confirms water is actually hot enough.
     # ALL THREE must be satisfied before the valve opens.
     elif not actuators.valve_is_open():
-        sun_out         = s['sun_is_out']
-        pvt_ready       = s['pvt_ready']
-        sun_forecast_ok = weather.sun_will_last_long_enough()
+        sun_out = s['sun_is_out']
+        pvt_ready = s['pvt_ready']
+
+        if TESTING_MODE and s.get('sun_forecast_ok') is not None:
+            sun_forecast_ok = s['sun_forecast_ok']
+        else:
+            sun_forecast_ok = weather.sun_will_last_long_enough()
 
         print(f"\n[CASE 1] Valve open check:")
         print(f"         sun_out={sun_out}  pvt_ready={pvt_ready} ({s['pvt_temp']}°C)  forecast_ok={sun_forecast_ok}")
@@ -194,7 +211,10 @@ def run_control_loop():
             actuators.led_off("Case 6: storage reached target temp")
 
         # Case 9: Pre-emptive LED — no sun expected + storage below target
-        sunshine_hours = weather.get_next_sunshine_hours()
+        if TESTING_MODE and s.get('sun_forecast_ok') is not None:
+            sunshine_hours = 1 if s['sun_forecast_ok'] else 0
+        else:
+            sunshine_hours = weather.get_next_sunshine_hours()
         if sunshine_hours == 0 and storage_temp < TEMP_STORAGE_TARGET and not actuators.led_is_on():
             print(f"\n[CASE 9] No sun expected for 12h + storage at {storage_temp}°C — LED ON (pre-emptive)")
             actuators.led_on("Case 9: no solar expected, pre-emptive heating signal")

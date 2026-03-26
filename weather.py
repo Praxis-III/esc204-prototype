@@ -6,6 +6,7 @@
 
 import sys
 import time
+import custom_data
 from config import PVT_HEAT_TIME_HOURS
 
 try:
@@ -28,6 +29,7 @@ _cache = {
 }
 
 _SERIAL_PREFIX = "WEATHER "
+_CUSTOM_PREFIX = "CUSTOM_DATA "
 _poller = None
 
 if uselect is not None:
@@ -98,13 +100,15 @@ def _ingest_serial_payload(payload):
 def poll_serial(max_lines=3):
     """
     Non-blocking serial poll.
-    Reads up to `max_lines` lines from USB serial and ingests any WEATHER payload.
-    Returns number of successfully ingested weather packets.
+    Reads up to `max_lines` lines from USB serial and ingests both WEATHER and
+    CUSTOM_DATA payloads.
+    Returns number of successfully ingested WEATHER packets.
     """
     if _poller is None:
         return 0
 
     updates = 0
+    custom_updates = 0
     for _ in range(max_lines):
         if not _poller.poll(0):
             break
@@ -114,16 +118,26 @@ def poll_serial(max_lines=3):
             continue
 
         line = line.strip()
-        if not line.startswith(_SERIAL_PREFIX):
-            continue
+        if line.startswith(_SERIAL_PREFIX):
+            raw_json = line[len(_SERIAL_PREFIX):]
+            try:
+                payload = json.loads(raw_json)
+                if _ingest_serial_payload(payload):
+                    updates += 1
+            except Exception as e:
+                print(f"  Weather serial parse failed: {e}")
 
-        raw_json = line[len(_SERIAL_PREFIX):]
-        try:
-            payload = json.loads(raw_json)
-            if _ingest_serial_payload(payload):
-                updates += 1
-        except Exception as e:
-            print(f"  Weather serial parse failed: {e}")
+        elif line.startswith(_CUSTOM_PREFIX):
+            raw_json = line[len(_CUSTOM_PREFIX):]
+            try:
+                payload = json.loads(raw_json)
+                if custom_data.ingest_serial_payload(payload):
+                    custom_updates += 1
+            except Exception as e:
+                print(f"  Custom data serial parse failed: {e}")
+
+    if custom_updates > 0:
+        print(f"  Applied {custom_updates} custom data update(s) from serial.")
 
     return updates
 
