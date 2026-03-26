@@ -12,8 +12,8 @@ LONGITUDE = -79.383186
 # ── GPIO Pin Assignments ──────────────────────────────────────────────────────
 
 # Stepper motor — single valve between PVT model tank and storage tank
-MOTOR_DIR_PIN  = 16   # GPIO16 — direction control
-MOTOR_STEP_PIN = 17   # GPIO17 — step pulse
+MOTOR_DIR_PIN  = 15   # GPIO16 — direction control
+MOTOR_STEP_PIN = 14   # GPIO17 — step pulse
 
 # Storage tank thermistor — 10K Precision Epoxy Thermistor
 THERMISTOR_STORAGE_PIN = 27   # GPIO27 (ADC1)
