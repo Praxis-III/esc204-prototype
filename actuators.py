@@ -17,15 +17,84 @@ from config import (
     LED_PIN,
 )
 
-# ── Pin Setup ─────────────────────────────────────────────────────────────────
-_dir_pin  = machine.Pin(MOTOR_DIR_PIN,  machine.Pin.OUT)
-_step_pin = machine.Pin(MOTOR_STEP_PIN, machine.Pin.OUT)
-_step_pin.value(0)
+class StepperMotor:
+    def __init__(
+        self,
+        dir_pin_num,
+        step_pin_num,
+        steps_per_rev=500,
+        start_delay_us=8000,
+        run_delay_us=2000,
+        ramp_steps=40,
+        move_angle=90,
+        open_direction=True,
+    ):
+        self.dir_pin = machine.Pin(dir_pin_num, machine.Pin.OUT)
+        self.step_pin = machine.Pin(step_pin_num, machine.Pin.OUT)
+        self.step_pin.value(0)
+
+        self.steps_per_rev = steps_per_rev
+        self.start_delay_us = start_delay_us
+        self.run_delay_us = run_delay_us
+        self.ramp_steps = ramp_steps
+
+        self.move_angle = move_angle
+        self.steps_per_move = int(self.steps_per_rev * self.move_angle / 360)
+
+        self.open_direction = open_direction
+        self.is_open = False
+
+    def step_motor(self, steps, direction):
+        self.dir_pin.value(1 if direction else 0)
+
+        for i in range(steps):
+            if i < self.ramp_steps and self.ramp_steps > 0:
+                delay_us = int(
+                    self.start_delay_us
+                    - (self.start_delay_us - self.run_delay_us) * (i / self.ramp_steps)
+                )
+            else:
+                delay_us = self.run_delay_us
+
+            self.step_pin.value(1)
+            time.sleep_us(delay_us)
+            self.step_pin.value(0)
+            time.sleep_us(delay_us)
+
+    def open(self):
+        if not self.is_open:
+            self.step_motor(self.steps_per_move, self.open_direction)
+            self.is_open = True
+            return True
+        return False
+
+    def close(self):
+        if self.is_open:
+            self.step_motor(self.steps_per_move, not self.open_direction)
+            self.is_open = False
+            return True
+        return False
+
+    def set_position_closed(self):
+        self.is_open = False
+
+    def set_position_open(self):
+        self.is_open = True
+
+
+# ── Actuator Setup ────────────────────────────────────────────────────────────
+_motor = StepperMotor(
+    dir_pin_num=MOTOR_DIR_PIN,
+    step_pin_num=MOTOR_STEP_PIN,
+    steps_per_rev=MOTOR_STEPS_PER_REV,
+    start_delay_us=MOTOR_START_DELAY_US,
+    run_delay_us=MOTOR_RUN_DELAY_US,
+    ramp_steps=MOTOR_RAMP_STEPS,
+    move_angle=MOTOR_MOVE_ANGLE,
+    open_direction=MOTOR_OPEN_DIRECTION,
+)
 
 _led = machine.Pin(LED_PIN, machine.Pin.OUT)
-
-# ── Derived motor constants ────────────────────────────────────────────────────
-_steps_per_move = int(MOTOR_STEPS_PER_REV * MOTOR_MOVE_ANGLE / 360)
 
 # ── State tracking ─────────────────────────────────────────────────────────────
 _state = {
@@ -34,41 +103,14 @@ _state = {
 }
 
 
-# ── Internal: step the motor ──────────────────────────────────────────────────
-
-def _step_motor(steps, direction):
-    """
-    Drives the stepper motor for a given number of steps in a given direction.
-    Includes a ramp-up from start_delay to run_delay over the first ramp_steps
-    to avoid stalling the motor on sudden starts (ported from motor.py).
-    """
-    _dir_pin.value(1 if direction else 0)
-
-    for i in range(steps):
-        # Linearly interpolate delay from start_delay down to run_delay
-        # over the first ramp_steps — after that, run at full speed
-        if i < MOTOR_RAMP_STEPS and MOTOR_RAMP_STEPS > 0:
-            delay_us = int(
-                MOTOR_START_DELAY_US
-                - (MOTOR_START_DELAY_US - MOTOR_RUN_DELAY_US) * (i / MOTOR_RAMP_STEPS)
-            )
-        else:
-            delay_us = MOTOR_RUN_DELAY_US
-
-        _step_pin.value(1)
-        time.sleep_us(delay_us)
-        _step_pin.value(0)
-        time.sleep_us(delay_us)
-
-
 # ── Valve control ─────────────────────────────────────────────────────────────
 
 def open_valve(reason=""):
     """Opens the valve between the PVT model tank and storage tank."""
     if not _state['valve']:
         print(f"  [VALVE] → OPEN  ({reason})")
-        _step_motor(_steps_per_move, MOTOR_OPEN_DIRECTION)
-        _state['valve'] = True
+        _motor.open()
+        _state['valve'] = _motor.is_open
     else:
         print(f"  [VALVE] already open — no action")
 
@@ -76,12 +118,13 @@ def close_valve(reason=""):
     """Closes the valve between the PVT model tank and storage tank."""
     if _state['valve']:
         print(f"  [VALVE] → CLOSED  ({reason})")
-        _step_motor(_steps_per_move, not MOTOR_OPEN_DIRECTION)
-        _state['valve'] = False
+        _motor.close()
+        _state['valve'] = _motor.is_open
     else:
         print(f"  [VALVE] already closed — no action")
 
 def valve_is_open():
+    _state['valve'] = _motor.is_open
     return _state['valve']
 
 def force_set_valve_open():
@@ -89,6 +132,7 @@ def force_set_valve_open():
     Marks valve as open without stepping the motor.
     Use this if the physical valve was manually repositioned.
     """
+    _motor.set_position_open()
     _state['valve'] = True
 
 def force_set_valve_closed():
@@ -96,6 +140,7 @@ def force_set_valve_closed():
     Marks valve as closed without stepping the motor.
     Use this if the physical valve was manually repositioned.
     """
+    _motor.set_position_closed()
     _state['valve'] = False
 
 
