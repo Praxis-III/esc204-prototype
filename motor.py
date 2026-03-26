@@ -76,25 +76,26 @@ class StepperMotor:
         self.is_open = True
 
 
-motor = StepperMotor(
-    dir_pin_num=16,
-    step_pin_num=17,
-    steps_per_rev=500,
-    start_delay_us=8000,
-    run_delay_us=2000,
-    ramp_steps=40,
-    move_angle=90,
-    open_direction=True
-)
+if __name__ == "__main__":
+    motor = StepperMotor(
+        dir_pin_num=16,
+        step_pin_num=17,
+        steps_per_rev=500,
+        start_delay_us=8000,
+        run_delay_us=2000,
+        ramp_steps=40,
+        move_angle=90,
+        open_direction=True
+    )
 
-print("Type 'open' or 'close'")
+    print("Type 'open' or 'close'")
 
-while True:
-    cmd = input("Command: ").strip().lower()
+    while True:
+        cmd = input("Command: ").strip().lower()
 
-    if cmd == "open":
-        motor.open()
-    elif cmd == "close":
-        motor.close()
-    else:
-        print("Use 'open' or 'close'")
+        if cmd == "open":
+            motor.open()
+        elif cmd == "close":
+            motor.close()
+        else:
+            print("Use 'open' or 'close'")
