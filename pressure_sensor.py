@@ -40,7 +40,8 @@ class PressureSensor:
         time.sleep(PRESSURE_SAMPLE_DELAY_S)
         if self._hx is None:
             raise RuntimeError("HX711 channel not initialized")
-        return self._hx.read()
+        raw = self._hx.read()
+        return raw
 
     def _median_raw(self, n=PRESSURE_SAMPLE_COUNT):
         samples = [self._read_raw_once() for _ in range(n)]
@@ -58,20 +59,23 @@ class PressureSensor:
         weight_kg = self._raw_to_kg(raw)
 
         # Exponential moving average for stable live values.
-        self._smoothed_kg = (
+        self._smoothed_kg = abs(
             PRESSURE_EMA_ALPHA * weight_kg
             + (1.0 - PRESSURE_EMA_ALPHA) * self._smoothed_kg
         )
 
-        # Correct slow offset drift only when the tank appears near zero.
-        if abs(self._smoothed_kg) < PRESSURE_DRIFT_THRESHOLD_KG:
-            self._offset = (
-                (1.0 - PRESSURE_DRIFT_ALPHA) * self._offset
-                + PRESSURE_DRIFT_ALPHA * raw
-            )
+        print(self._smoothed_kg)
+
+        # # Correct slow offset drift only when the tank appears near zero.
+        # if abs(self._smoothed_kg) < PRESSURE_DRIFT_THRESHOLD_KG:
+        #     self._offset = (
+        #         (1.0 - PRESSURE_DRIFT_ALPHA) * self._offset
+        #         + PRESSURE_DRIFT_ALPHA * raw
+        #     )
 
         kg = 0.0 if abs(self._smoothed_kg) < PRESSURE_DEADBAND_KG else self._smoothed_kg
         litres = max(0.0, min(STORAGE_TANK_MAX_VOLUME_L, kg))
+        print(str(litres) + " mL")
         return round(litres, 2)
 
     def read_volume_litres(self):

@@ -68,7 +68,7 @@ PRESSURE_SAMPLE_DELAY_S     = 0.005    # Delay between raw HX711 reads
 PRESSURE_TARE_SAMPLES       = 25
 PRESSURE_EMA_ALPHA          = 0.7      # Live reading smoothing
 PRESSURE_DRIFT_ALPHA        = 0.001    # Zero-point drift correction
-PRESSURE_DRIFT_THRESHOLD_KG = 0.02     # Drift-correct only near zero
+PRESSURE_DRIFT_THRESHOLD_KG = 0.0002     # Drift-correct only near zero
 PRESSURE_DEADBAND_KG        = 0.005    # Snap tiny values to zero
 
 # ── Temperature Thresholds (°C) ───────────────────────────────────────────────
