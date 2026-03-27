@@ -1,0 +1,11 @@
+# Laptop-side Python dependencies for PVT Solar Control System
+# Install with:  pip install -r requirements.txt
+
+# Web dashboard server
+flask>=2.3.0
+
+# USB serial communication with the Pico W
+pyserial>=3.5
+
+# Weather API (used by weather_serial_sender.py)
+requests>=2.28.0

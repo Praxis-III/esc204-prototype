@@ -32,6 +32,10 @@ import sensors
 import actuators
 import weather
 import custom_data
+try:
+    import ujson as json
+except ImportError:
+    import json
 from config import (
     TEMP_PVT_READY,
     TEMP_STORAGE_TARGET,
@@ -48,6 +52,44 @@ _valve_opened_at       = None
 _cloud_transient_start = None
 
 CLOUD_TOLERANCE_S = 600   # 10 minutes
+
+
+# ── Structured logging ────────────────────────────────────────────────────────
+
+def _build_log_packet(s):
+    """
+    Build a flat dict that captures the full system state after one control
+    loop iteration.  Sent to the laptop as a JSON line prefixed with LOG_DATA.
+    """
+    act = actuators.get_state()
+    storage_frac = s.get('storage_frac') or 0.0
+    temps = [t for t in [s.get('storage_temp'), s.get('pvt_temp')] if t is not None]
+    return {
+        "t":               int(time.time()),
+        "storage_temp":    s.get('storage_temp'),
+        "pvt_temp":        s.get('pvt_temp'),
+        "lux":             s.get('lux'),
+        "storage_vol_l":   s.get('storage_vol_l'),
+        "storage_pct":     round(storage_frac * 100, 1),
+        "valve_open":      act['valve'],
+        "heater_on":       act['led'],
+        "sun_is_out":      bool(s.get('sun_is_out', False)),
+        "pvt_ready":       bool(s.get('pvt_ready', False)),
+        "forecast_ok":     s.get('sun_forecast_ok'),
+        "freeze_flag":     bool(temps and min(temps) <= TEMP_FREEZE_PROTECTION),
+        "overtemp_flag":   bool(s.get('storage_temp') is not None and s['storage_temp'] > 80.0),
+        "storage_full":    bool(storage_frac >= 0.99),
+        "storage_low":     bool(storage_frac < (1.0 - STORAGE_REFILL_THRESHOLD)),
+        "cloud_transient": _cloud_transient_start is not None,
+    }
+
+
+def _send_log_packet(s):
+    """Serialize and emit a LOG_DATA packet over USB serial to the laptop."""
+    try:
+        print("LOG_DATA " + json.dumps(_build_log_packet(s)))
+    except Exception as e:
+        print(f"  [LOG] Failed to send log packet: {e}")
 
 
 # ── Sensor snapshot ────────────────────────────────────────────────────────────
@@ -126,12 +168,14 @@ def run_control_loop():
         print(f"\n[CASE 4] FREEZE PROTECTION — sensor reading {frozen}°C ≤ {TEMP_FREEZE_PROTECTION}°C")
         actuators.close_valve("Case 4: freeze protection")
         actuators.led_on("Case 4: freeze — protecting storage water")
+        _send_log_packet(s)
         return
 
     # ── CASE 5: Overtemperature ───────────────────────────────────────────────
     if storage_temp is not None and storage_temp > 80.0:
         print(f"\n[CASE 5] OVERTEMPERATURE — storage at {storage_temp}°C")
         actuators.emergency_stop("Case 5: overtemperature")
+        _send_log_packet(s)
         return
 
     # ── CASE 3: Storage volume low — print alert ──────────────────────────────
@@ -220,3 +264,4 @@ def run_control_loop():
             actuators.led_on("Case 9: no solar expected, pre-emptive heating signal")
 
     print(f"\nControl loop complete.")
+    _send_log_packet(s)
