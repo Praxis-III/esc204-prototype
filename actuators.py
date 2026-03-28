@@ -1,82 +1,77 @@
 # actuators.py
 # ─────────────────────────────────────────────────────────────────────────────
 # Controls all output devices:
-#   - Stepper motor valve (opens/closes flow between PVT tank and storage tank)
+#   - DC pump via relay (controls water flow between PVT tank and storage tank)
 #   - LED (signals that water would be heated — stands in for a heater)
 #
-# The stepper motor logic is ported directly from motor.py (your hardware test),
-# adapted to be driven by the control system rather than interactive input.
+# The pump replaces the previous stepper motor valve. Since the pump is
+# simply on or off (no positional state to track), startup initialisation
+# just ensures the pump is stopped and state is set to False.
 # ─────────────────────────────────────────────────────────────────────────────
 
 import machine
-import time
 from config import (
-    MOTOR_DIR_PIN, MOTOR_STEP_PIN,
-    MOTOR_STEPS_PER_REV, MOTOR_START_DELAY_US, MOTOR_RUN_DELAY_US,
-    MOTOR_RAMP_STEPS, MOTOR_MOVE_ANGLE, MOTOR_OPEN_DIRECTION,
+    PUMP_RELAY_PIN,
     LED_PIN,
 )
-from motor import StepperMotor
+from pump import PumpController
+
 # ── Actuator Setup ────────────────────────────────────────────────────────────
-_motor = StepperMotor(
-    dir_pin_num=MOTOR_DIR_PIN,
-    step_pin_num=MOTOR_STEP_PIN,
-    steps_per_rev=MOTOR_STEPS_PER_REV,
-    start_delay_us=MOTOR_START_DELAY_US,
-    run_delay_us=MOTOR_RUN_DELAY_US,
-    ramp_steps=MOTOR_RAMP_STEPS,
-    move_angle=MOTOR_MOVE_ANGLE,
-    open_direction=MOTOR_OPEN_DIRECTION,
+_pump = PumpController(
+    relay_pin_num=PUMP_RELAY_PIN,
+    active_low=True,
+    initial_state="off",
 )
 
 _led = machine.Pin(LED_PIN, machine.Pin.OUT)
 
-# ── State tracking ─────────────────────────────────────────────────────────────
+# ── State tracking ────────────────────────────────────────────────────────────
 _state = {
-    'valve': False,   # False = closed, True = open
-    'led':   False,
+    'pump': False,
+    'led':  False,
 }
 
 
-# ── Valve control ─────────────────────────────────────────────────────────────
+# ── Pump control ──────────────────────────────────────────────────────────────
 
 def open_valve(reason=""):
-    """Opens the valve between the PVT model tank and storage tank."""
-    if not _state['valve']:
-        print(f"  [VALVE] → OPEN  ({reason})")
-        _motor.open()
-        _state['valve'] = _motor.is_open
+    """Starts the pump — allows water to flow from PVT tank to storage tank."""
+    if not _state['pump']:
+        print(f"  [PUMP] → ON  ({reason})")
+        _pump.run()
+        _state['pump'] = True
     else:
-        print(f"  [VALVE] already open — no action")
+        print(f"  [PUMP] already running — no action")
 
 def close_valve(reason=""):
-    """Closes the valve between the PVT model tank and storage tank."""
-    if _state['valve']:
-        print(f"  [VALVE] → CLOSED  ({reason})")
-        _motor.close()
-        _state['valve'] = _motor.is_open
+    """Stops the pump — halts water flow."""
+    if _state['pump']:
+        print(f"  [PUMP] → OFF  ({reason})")
+        _pump.stop()
+        _state['pump'] = False
     else:
-        print(f"  [VALVE] already closed — no action")
+        print(f"  [PUMP] already stopped — no action")
 
 def valve_is_open():
-    _state['valve'] = _motor.is_open
-    return _state['valve']
+    """Returns True if the pump is currently running."""
+    _state['pump'] = _pump.is_running()
+    return _state['pump']
 
 def force_set_valve_open():
     """
-    Marks valve as open without stepping the motor.
-    Use this if the physical valve was manually repositioned.
+    Marks pump as running without calling run().
+    Use only if external state sync is needed (unlikely with a pump).
     """
-    _motor.set_position_open()
-    _state['valve'] = True
+    _pump.relay.value(_pump._on_value)
+    _state['pump'] = True
 
 def force_set_valve_closed():
     """
-    Marks valve as closed without stepping the motor.
-    Use this if the physical valve was manually repositioned.
+    Ensures pump is stopped and state is False.
+    Called at startup to establish a known safe state.
     """
-    _motor.set_position_closed()
-    _state['valve'] = False
+    _pump.stop()
+    _state['pump'] = False
 
 
 # ── LED control ───────────────────────────────────────────────────────────────
@@ -99,16 +94,19 @@ def led_is_on():
     return _state['led']
 
 
-# ── Emergency stop ─────────────────────────────────────────────────────────────
+# ── Emergency stop ────────────────────────────────────────────────────────────
 
 def emergency_stop(reason="EMERGENCY STOP"):
-    """Closes valve and turns off LED immediately."""
+    """
+    Stops pump and turns off LED immediately.
+    Safe to call at any time regardless of current state.
+    """
     print(f"\n!!! {reason} !!!")
     close_valve(reason)
     led_off(reason)
 
 
-# ── State summary ──────────────────────────────────────────────────────────────
+# ── State summary ─────────────────────────────────────────────────────────────
 
 def get_state():
     """Returns a copy of the current actuator state."""
@@ -116,6 +114,6 @@ def get_state():
 
 def print_state():
     s = get_state()
-    valve = "OPEN"   if s['valve'] else "CLOSED"
-    led   = "ON"     if s['led']   else "OFF"
-    print(f"  Actuators → Valve:{valve}  LED:{led}")
+    pump = "ON"  if s['pump'] else "OFF"
+    led  = "ON"  if s['led']  else "OFF"
+    print(f"  Actuators → Pump:{pump}  LED:{led}")

@@ -4,24 +4,27 @@
 #   - Storage tank thermistor (10K Precision Epoxy, GPIO27)
 #   - PVT tank thermistor    (same type, GPIO28)
 #   - Photoresistor / LDR    (lux conversion, GPIO26)
-#   - Pressure sensor        (analog ADC → volume in litres, GPIO22 placeholder)
+#   - Pressure sensor        (HX711 load cell, GPIO2/GPIO3)
 #
-# Both thermistors are identical in type and share the same calibration
-# constants from config.py. They are read independently via separate ADC pins.
+# Both thermistors are identical in type and share calibration constants
+# from config.py. They are read independently via separate ADC pins.
 #
-# All sensors use MicroPython's machine.ADC (16-bit, 0–65535, 3.3V reference).
+# All analog sensors use MicroPython's machine.ADC (16-bit, 3.3V reference).
+#
+# FIX: PressureSensor is lazy-initialised on first use rather than at module
+# level. This prevents the HX711 tare sequence (3s sleep + 25 samples) from
+# running on import, which would crash the system if the HX711 is not connected.
 # ─────────────────────────────────────────────────────────────────────────────
 
 import machine
 import math
-from pressure_sensor import PressureSensor
 from config import (
     THERMISTOR_STORAGE_PIN, THERMISTOR_PVT_PIN,
     PHOTORESISTOR_PIN,
     THERM_NOMINAL_RESISTANCE, THERM_NOMINAL_TEMP_C,
     THERM_B_COEFFICIENT, THERM_SERIES_RESISTOR, THERM_OFFSET,
     LDR_FIXED_RESISTOR, LDR_A_CONST, LDR_B_CONST,
-    LDR_SUNLIGHT_LUX, LDR_BRIGHT_SUN_LUX,
+    LDR_SUNLIGHT_LUX,
     STORAGE_TANK_MAX_VOLUME_L,
 )
 
@@ -30,9 +33,25 @@ _therm_storage_adc = machine.ADC(THERMISTOR_STORAGE_PIN)
 _therm_pvt_adc     = machine.ADC(THERMISTOR_PVT_PIN)
 _ldr_adc           = machine.ADC(PHOTORESISTOR_PIN)
 
-# Pico W: 16-bit ADC, 3.3V reference
 _ADC_MAX = 65535
 _VREF    = 3.3
+
+# ── Lazy pressure sensor ──────────────────────────────────────────────────────
+# _pressure_sensor is None until first call to read_storage_volume_litres().
+# This avoids the HX711 tare running at import time.
+_pressure_sensor = None
+
+def _get_pressure_sensor():
+    """
+    Returns the PressureSensor instance, initialising it on first call.
+    Separating initialisation from import means the tare sequence only runs
+    when volume is actually needed, not the moment sensors.py is imported.
+    """
+    global _pressure_sensor
+    if _pressure_sensor is None:
+        from pressure_sensor import PressureSensor
+        _pressure_sensor = PressureSensor()
+    return _pressure_sensor
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -52,7 +71,7 @@ def _adc_to_voltage(raw):
 def _resistance_from_voltage(voltage):
     """
     Converts ADC voltage to thermistor resistance.
-    Divider: Vref → Rs → ADC → R_therm → GND  (thermistor on bottom)
+    Divider: Vref → Rs → ADC node → R_therm → GND  (thermistor on bottom)
     R_therm = Rs * V / (Vref - V)
     """
     if voltage >= _VREF or voltage <= 0:
@@ -61,8 +80,7 @@ def _resistance_from_voltage(voltage):
 
 def _resistance_to_temp_c(resistance):
     """
-    Converts thermistor resistance to temperature in °C using the
-    Steinhart-Hart B-parameter equation:
+    Converts thermistor resistance to °C using Steinhart-Hart B-parameter eq:
         1/T = 1/T0 + (1/B) * ln(R/R0)
     """
     if resistance is None or resistance <= 0:
@@ -102,8 +120,9 @@ def read_pvt_temp_c():
 # ── Photoresistor / LDR ───────────────────────────────────────────────────────
 
 def _ldr_resistance(voltage):
-    """Converts LDR voltage divider output to LDR resistance.
-    Divider: Vref → LDR → ADC → R_fixed → GND
+    """
+    Converts LDR voltage divider output to LDR resistance.
+    Divider: Vref → LDR → ADC node → R_fixed → GND
     """
     if voltage <= 0.001:
         return 1e9
@@ -116,7 +135,7 @@ def _resistance_to_lux(resistance):
 def read_lux():
     """
     Reads the photoresistor and returns approximate illuminance in lux.
-    Returns 0.0 in darkness.
+    Returns near-zero in complete darkness.
     """
     raw        = _read_avg(_ldr_adc)
     voltage    = _adc_to_voltage(raw)
@@ -130,15 +149,13 @@ def sun_is_out():
 
 # ── Pressure Sensor (Storage Tank Volume) ────────────────────────────────────
 
-_pressure_sensor = PressureSensor()
-
 def read_storage_volume_litres():
     """
-    Reads the pressure sensor and converts to volume in litres.
-    Uses HX711 weight conversion.
-    Water density is assumed 1 kg/L.
+    Reads the HX711 pressure/weight sensor and returns volume in litres.
+    Initialises the sensor on first call (triggers tare sequence).
+    Water density assumed 1 kg/L.
     """
-    return _pressure_sensor.read_volume_litres()
+    return _get_pressure_sensor().read_volume_litres()
 
 def read_storage_fill_fraction():
     """Returns storage tank fill level as 0.0 (empty) to 1.0 (full)."""
