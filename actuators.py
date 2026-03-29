@@ -7,6 +7,10 @@
 # The pump replaces the previous stepper motor valve. Since the pump is
 # simply on or off (no positional state to track), startup initialisation
 # just ensures the pump is stopped and state is set to False.
+#
+# FIX: force_set_valve_open() previously accessed _pump.relay and _pump._on_value
+# directly, breaking encapsulation and risking a crash if PumpController
+# internals change. It now calls _pump.run() and _pump.stop() instead.
 # ─────────────────────────────────────────────────────────────────────────────
 
 import machine
@@ -59,10 +63,11 @@ def valve_is_open():
 
 def force_set_valve_open():
     """
-    Marks pump as running without calling run().
-    Use only if external state sync is needed (unlikely with a pump).
+    Forces pump on and syncs state.
+    FIX: uses _pump.run() instead of accessing private relay/on_value attrs
+    directly, which broke encapsulation and would crash on internal changes.
     """
-    _pump.relay.value(_pump._on_value)
+    _pump.run()
     _state['pump'] = True
 
 def force_set_valve_closed():
