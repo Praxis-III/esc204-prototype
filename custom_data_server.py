@@ -26,13 +26,24 @@ except ImportError:
 def detect_serial_port():
     candidates = []
 
-    if sys.platform.startswith("darwin") or sys.platform.startswith("linux"):
+    if sys.platform.startswith("win"):
+        try:
+            from serial.tools import list_ports
+
+            usb_ports = [p.device for p in list_ports.comports() if p.device.startswith("COM")]
+            candidates.extend(sorted(usb_ports))
+        except Exception:
+            pass
+    else:
         candidates.extend(sorted(glob.glob("/dev/tty.usbmodem*")))
         candidates.extend(sorted(glob.glob("/dev/ttyACM*")))
         candidates.extend(sorted(glob.glob("/dev/ttyUSB*")))
 
     if len(candidates) == 1:
         return candidates[0]
+
+    if candidates:
+        print("Multiple serial ports detected:", ", ".join(candidates), file=sys.stderr)
     return None
 
 

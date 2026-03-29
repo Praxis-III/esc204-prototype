@@ -252,9 +252,9 @@ def _apply_truth_table(S, H, T, P, W, zone, s):
         if not T and P and W:
             return True, False, "00011: PVT ready, tank critical — pump"
 
-        # 00100 → 00  energy save, tank temp low but no solar path available
+        # 00100 → 01  energy save, tank temp low but no solar path available
         if T and not P and not W:
-            return False, False, "00100: energy save — tank low but no solar and PVT cold"
+            return False, True, "00100: energy save — tank low but no solar and PVT cold"
 
         # 00101 → 11  tank critically low, temp low, no solar at all — pump+heat
         if T and not P and W:
